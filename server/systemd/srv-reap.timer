@@ -1,0 +1,10 @@
+# User unit: runs srv-reap every 5 minutes. Install next to srv-reap.service.
+[Unit]
+Description=Run srv-reap every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

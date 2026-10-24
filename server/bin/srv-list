@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# srv-list — recorded workers: name, live/dead, status, idle seconds, requester, dir.
+set -uo pipefail
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
+
+now=$(date +%s)
+for rec in "$SRV_STATE"/srv-*; do
+  [ -f "$rec" ] || continue
+  name=$(basename "$rec"); pid=$(srv_get "$rec" pid)
+  state=dead; status=-; idle=-
+  srv_alive "$rec" && state=live
+  [ "$(srv_get "$rec" done)" = 1 ] && state=done
+  if [ -f "$SRV_SESSIONS/$pid.json" ]; then
+    read -r status since < <(python3 -I -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+print(s.get("status", "?"), int(s.get("statusUpdatedAt", 0)) // 1000)' "$SRV_SESSIONS/$pid.json")
+    idle=$((now - ${since:-$now}))
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$state" "$status" "$idle" "$(srv_get "$rec" from)" "$(srv_get "$rec" dir)"
+done

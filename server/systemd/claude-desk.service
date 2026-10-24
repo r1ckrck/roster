@@ -1,0 +1,17 @@
+# System unit: keeps Claude Code's Remote Control server running as the agent user.
+# Its start-up session is the desk. Edit User, WorkingDirectory, the claude path
+# and --name, then install to /etc/systemd/system/claude-desk.service.
+[Unit]
+Description=Claude Code Remote Control (desk)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agent
+WorkingDirectory=/opt/desk
+ExecStart=/home/agent/.local/bin/claude remote-control --name server-desk --spawn same-dir --permission-mode auto
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

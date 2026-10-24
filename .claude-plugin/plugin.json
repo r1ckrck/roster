@@ -1,0 +1,16 @@
+{
+  "name": "roster",
+  "version": "0.2.2",
+  "description": "Agents sharing a folder see who else is on, what they have changed and which shared resources they hold.",
+  "author": { "name": "r1ckrck" },
+  "license": "GPL-3.0-only",
+  "userConfig": {
+    "onHeldResource": {
+      "type": "string",
+      "title": "When a command needs a resource a peer holds",
+      "description": "pause: stop it once with a note, and running it again goes ahead. warn: run it and add a note.",
+      "options": ["pause", "warn"],
+      "default": "pause"
+    }
+  }
+}

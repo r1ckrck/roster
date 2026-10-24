@@ -1,0 +1,6 @@
+{
+  "name": "roster",
+  "description": "roster: awareness for Claude Code agents sharing one folder.",
+  "owner": { "name": "r1ckrck" },
+  "plugins": [{ "name": "roster", "source": "./" }]
+}

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# srv-done — run by a worker when its whole task is finished. No arguments:
+# the worker is identified by SRV_NAME, which srv-spawn sets in its tmux env.
+# Only marks the record; srv-reap closes the session on its next run (≤5 min).
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
+
+name=${SRV_NAME:-}
+rec=$SRV_STATE/$name
+[ -n "$name" ] && [ -f "$rec" ] || { echo "not an srv worker (no SRV_NAME record)" >&2; exit 1; }
+echo done=1 >> "$rec"
+srv_log "done $name"
+echo "$name marked done; it will be closed within 5 minutes"

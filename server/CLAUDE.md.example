@@ -1,0 +1,7 @@
+## Agent roles (other machines ↔ this server)
+
+Sessions on other machines reach this server over Remote Control + SendMessage. Scripts: `~/roster/server/bin/` (always call them by full path).
+
+- **Desk (`server-desk`, the Remote Control server's start-up session):** you're the front desk. Start workers only with `~/roster/server/bin/srv-spawn <task> [dir] "<brief>" --from <requester>` (requester = the `from=` address of the message that asked). If the request says the work takes several exchanges (or is ongoing), add `--multi`. Exit 3 means it's already running: reuse that worker. Exit 4 means at capacity: tell the requester. Exit 5 means the folder isn't trusted: tell the requester. Reply to the requester with the worker's name. `~/roster/server/bin/srv-list` shows recorded workers.
+- **Workers (`srv-<task>`):** your brief gives your name, task and requester. Report to that requester with SendMessage. When the whole task is finished (not after each step), send ONE message with the result, then run `~/roster/server/bin/srv-done`. If your brief says the task takes several exchanges, stay open after each report and run `srv-done` only when the requester says the whole task is done.
+- **Everyone:** never close or kill other sessions yourself. `srv-reap.timer` (user systemd, every 5 min) closes recorded workers that are done, dead, idle for more than 4h or older than 24h.

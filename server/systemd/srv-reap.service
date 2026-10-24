@@ -1,0 +1,11 @@
+# User unit: one reap pass. Install to ~/.config/systemd/user/ as the agent user.
+# %h is that user's home; change the path if the repo lives elsewhere.
+[Unit]
+Description=Close finished, dead or long-idle srv-* Claude workers (recorded by srv-spawn only)
+
+[Service]
+Type=oneshot
+ExecStart=%h/roster/server/bin/srv-reap
+UMask=0002
+Nice=10
+TimeoutStartSec=2min

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# srv-reap — close recorded workers that are done, dead, idle > SRV_IDLE_MAX,
+# or older than SRV_HARD_MAX, then clear their records. Run by srv-reap.timer.
+# Iterates only over records, so sessions srv-spawn didn't start are never touched.
+set -uo pipefail
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
+
+now=$(date +%s)
+for rec in "$SRV_STATE"/srv-*; do
+  [ -f "$rec" ] || continue
+  name=$(basename "$rec")
+  pid=$(srv_get "$rec" pid)
+  started=$(srv_get "$rec" started)
+  reason=
+
+  if [ "$(srv_get "$rec" done)" = 1 ]; then
+    reason=done
+  elif ! srv_tmux has-session -t "=$name" 2>/dev/null; then
+    reason=gone
+  elif [ -z "$pid" ] || ! srv_alive "$rec"; then
+    reason=dead
+  elif [ $((now - ${started:-$now})) -gt "$SRV_HARD_MAX" ]; then
+    reason=hard-max
+  elif [ -f "$SRV_SESSIONS/$pid.json" ]; then
+    read -r status since < <(python3 -I -c '
+import json, sys
+s = json.load(open(sys.argv[1]))
+print(s.get("status", "?"), int(s.get("statusUpdatedAt", 0)) // 1000)' "$SRV_SESSIONS/$pid.json")
+    if [ "$status" = idle ] && [ $((now - ${since:-$now})) -gt "$SRV_IDLE_MAX" ]; then
+      reason="idle $((now - ${since:-$now}))s"
+    fi
+  fi
+  [ -n "$reason" ] || continue
+
+  srv_tmux kill-session -t "=$name" 2>/dev/null
+  for _ in $(seq 20); do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+  # claude normally removes its own session file; clear it only if the pid is really gone
+  if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$SRV_SESSIONS/$pid.json" "$SRV_SESSIONS/$pid".*.key
+  fi
+  rm -f "$rec"
+  srv_log "reap $name ($reason)"
+  echo "reaped $name ($reason)"
+done

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# srv-spawn <task> [dir] "<brief>" [--from <peer>] [--multi]
+# Start a Claude worker "srv-<task>" in tmux (socket -L srv) with Remote Control
+# on and auto mode, record it, print its name. --from is the peer address the
+# worker reports back to (a name or bridge:/uds: address from ListAgents).
+# --multi: the work takes several exchanges, so the worker stays after its
+# reports and runs srv-done only when the requester says the whole task is done.
+# Exit: 0 started, 2 usage, 3 already running (name printed), 4 at capacity,
+#       5 dir not trusted, 6 worker failed to start.
+# Defaults (desk name, folder, limits, paths) are in lib.sh; override them in ~/.config/srv/env.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
+
+from=$SRV_DESK
+multi=0
+args=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --from) from=${2:?--from needs a value}; shift 2 ;;
+    --multi) multi=1; shift ;;
+    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+case ${#args[@]} in
+  2) task=${args[0]}; dir=$SRV_DIR; brief=${args[1]} ;;
+  3) task=${args[0]}; dir=${args[1]}; brief=${args[2]} ;;
+  *) echo "usage: srv-spawn <task> [dir] \"<brief>\" [--from <peer>] [--multi]" >&2; exit 2 ;;
+esac
+
+[[ $task =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || { echo "task must be [a-z0-9-], max 31 chars" >&2; exit 2; }
+name=srv-$task
+dir=$(readlink -f "$dir")
+[ -d "$dir" ] || { echo "no such dir: $dir" >&2; exit 2; }
+
+if srv_tmux has-session -t "=$name" 2>/dev/null; then
+  echo "$name"; echo "already running: $name" >&2; exit 3
+fi
+if [ "$(srv_live_count)" -ge "$SRV_MAX" ]; then
+  echo "at capacity ($SRV_MAX workers): $(ls "$SRV_STATE" | grep '^srv-' | tr '\n' ' ')" >&2; exit 4
+fi
+
+# A worker in an untrusted folder hangs on the trust dialog with nobody to answer it.
+# Trusted = the dir or one of its parents has hasTrustDialogAccepted in the trust file.
+trust=0
+python3 -I - "$dir" "$SRV_TRUST_FILE" <<'EOF' || trust=$?
+import json, os, sys
+try:
+    p = json.load(open(sys.argv[2])).get('projects', {})
+except (OSError, ValueError):
+    sys.exit(2)
+d = sys.argv[1]
+while True:
+    if p.get(d, {}).get('hasTrustDialogAccepted'):
+        sys.exit(0)
+    if d == '/':
+        sys.exit(1)
+    d = os.path.dirname(d)
+EOF
+case $trust in
+  0) ;;
+  2) echo "can't read $SRV_TRUST_FILE — run 'claude' once as this user" >&2; exit 5 ;;
+  *) echo "not trusted by Claude Code: $dir — run 'claude' there once as this user and accept the trust prompt" >&2; exit 5 ;;
+esac
+
+prompt="You are $name, a worker session started by srv-spawn. Your session name is $name.
+Requested by: $from — report to it with SendMessage (to: \"$from\").
+Task: $brief"
+if [ "$multi" = 1 ]; then
+  prompt+="
+This task takes several exchanges with $from. Report to $from as you go, and stay open for follow-ups after each report; do NOT run srv-done just because you reported. Run $SRV_BIN/srv-done only when $from says the whole task is done."
+else
+  prompt+="
+When the WHOLE task is finished (not after each step): send $from ONE message containing the result (no separate 'done' notice), then run $SRV_BIN/srv-done"
+fi
+
+rec=$SRV_STATE/$name
+printf 'name=%s\ndir=%s\nfrom=%s\nmulti=%s\nstarted=%s\n' "$name" "$dir" "$from" "$multi" "$(date +%s)" > "$rec"
+
+# Multi-arg form: tmux execs claude directly, so the brief needs no shell quoting.
+# The SRV_* settings ride along so srv-done finds this record even when the tmux
+# server was started earlier with other settings.
+# --remote-control gets an explicit name so the positional is read as the prompt.
+srv_tmux new-session -d -s "$name" -c "$dir" \
+  -e SRV_NAME="$name" -e SRV_ENV="$SRV_ENV" -e SRV_STATE="$SRV_STATE" -e SRV_SOCK="$SRV_SOCK" \
+  -e PATH="$(dirname "$SRV_CLAUDE"):/usr/local/bin:/usr/bin:/bin" \
+  "$SRV_CLAUDE" --name "$name" --remote-control "$name" --permission-mode auto "$prompt"
+
+pid=$(srv_tmux display -pt "=$name:" '#{pane_pid}')
+for _ in $(seq 60); do
+  [ -f "$SRV_SESSIONS/$pid.json" ] && break
+  sleep 0.5
+done
+if [ ! -f "$SRV_SESSIONS/$pid.json" ]; then
+  srv_tmux capture-pane -pt "=$name:" >&2 || true
+  srv_tmux kill-session -t "=$name" 2>/dev/null || true
+  rm -f "$rec"
+  echo "worker did not start (screen above)" >&2; exit 6
+fi
+printf 'pid=%s\nprocStart=%s\n' "$pid" "$(awk '{print $22}' "/proc/$pid/stat")" >> "$rec"
+srv_log "spawn $name pid=$pid dir=$dir from=$from multi=$multi"
+echo "$name"
